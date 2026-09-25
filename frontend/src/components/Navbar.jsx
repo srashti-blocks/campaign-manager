@@ -1,4 +1,5 @@
 import { useWallet } from '../hooks/useWallet';
+import { Link } from 'react-router-dom'; 
 
 export default function Navbar() {
   const { address, isCorrectNetwork, connectWallet, disconnectWallet, switchToSepolia } = useWallet();
@@ -17,7 +18,16 @@ export default function Navbar() {
 
   return (
     <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 30px', borderBottom: '1px solid #eaeaea', background: '#fff' }}>
-      <h2 style={{ margin: 0, fontSize: '20px' }}>🚀 Crowdfunding DApp</h2>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+        <h2 style={{ margin: 0, fontSize: '20px' }}>
+          <Link to="/" style={{ textDecoration: 'none', color: '#333' }}>🚀 Crowdfunding DApp</Link>
+        </h2>
+        {/* 2. Surgical navigation link addition */}
+        <Link to="/create" style={{ textDecoration: 'none', color: '#007bff', fontWeight: 'bold', fontSize: '15px' }}>
+          + Create Campaign
+        </Link>
+      </div>
+      
       
       <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
         {address && !isCorrectNetwork && (

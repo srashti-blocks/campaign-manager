@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
+import { Link } from 'react-router-dom';
 
 export default function CampaignList() {
   const [campaigns, setCampaigns] = useState([]);
@@ -106,12 +107,16 @@ export default function CampaignList() {
 
               return (
                 <div key={c.campaign_id} style={{ background: '#fff', padding: '20px', borderRadius: '8px', border: '1px solid #eaeaea', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ margin: '0 0 10px 0' }}>Campaign #{c.campaign_id}</h3>
-                    <span style={{ fontSize: '12px', background: c.is_successful ? '#e2f0d9' : '#fff3cd', color: c.is_successful ? '#2d572c' : '#856404', padding: '4px 8px', borderRadius: '4px' }}>
-                      {c.is_successful ? 'Successful' : 'Active'}
-                    </span>
-                  </div>
+                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+  <h3 style={{ margin: '0 0 10px 0' }}>
+    <Link to={`/campaign/${c.campaign_id}`} style={{ color: '#007bff', textDecoration: 'none' }}>
+      Campaign #{c.campaign_id}
+    </Link>
+  </h3>
+  <span style={{ fontSize: '12px', background: c.is_successful ? '#e2f0d9' : '#fff3cd', color: c.is_successful ? '#2d572c' : '#856404', padding: '4px 8px', borderRadius: '4px' }}>
+    {c.is_successful ? 'Successful' : 'Active'}
+  </span>
+</div>
                   <p style={{ margin: '5px 0', fontSize: '14px', color: '#555' }}>
                     <strong>Creator:</strong> {c.creator}
                   </p>

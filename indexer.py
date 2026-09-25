@@ -138,7 +138,7 @@ def run_indexer_loop():
                                     print(f"-> Found Event [Refunded]: Campaign ID #{event.args['campaignId']}")
                                     with session.begin_nested():
                                         try:
-                                            query = session.query(Pledge).filter_by(campaign_id=cid, refunded=False)
+                                            query = session.query(Pledge).filter_by(campaign_id=cid, refunded=False,)
                                             if backer_address:
                                                 query = query.filter_by(backer=backer_address)
                                             pledges_to_refund = query.all()
