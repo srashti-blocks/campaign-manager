@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { useWallet } from '../hooks/useWallet';
@@ -52,66 +52,66 @@ export default function CampaignDetail() {
   const [refundError, setRefundError] = useState(null);
   const [refundSuccess, setRefundSuccess] = useState(null);
 
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawError, setWithdrawError] = useState(null);
+  const [withdrawSuccess, setWithdrawSuccess] = useState(null);
+
+  // Stable fetch function depending only on id
+  const fetchCampaignDetail = useCallback(async (signal) => {
+    setError(null);
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/campaigns/${id}`, { signal });
+
+      if (!response.ok) {
+        throw new Error(`Campaign not found or server error (${response.status})`);
+      }
+
+      const data = await response.json();
+      
+      setCampaign(data.campaign);
+      setPledges(data.pledges || []);
+
+      if (data.campaign.metadata_uri) {
+        let metaUri = data.campaign.metadata_uri;
+        
+        if (metaUri.startsWith("ipfs://")) {
+          const hash = metaUri.replace("ipfs://", "");
+          if (hash.length > 4) {
+            metaUri = `https://cloudflare-ipfs.com/ipfs/${hash}`;
+          } else {
+            setMetadata({ title: `Campaign #${data.campaign.campaign_id}`, description: "Mock/Test Metadata URI." });
+            metaUri = null;
+          }
+        }
+
+        if (metaUri && (metaUri.startsWith("http://") || metaUri.startsWith("https://"))) {
+          try {
+            const metaRes = await fetch(metaUri, { signal });
+            if (metaRes.ok) {
+              const metaData = await metaRes.json();
+              setMetadata(metaData);
+            } else {
+              setMetadata({ title: `Campaign #${data.campaign.campaign_id}`, description: "Metadata failed to load." });
+            }
+          } catch (ipfsErr) {
+            console.warn("Could not fetch metadata from gateway:", ipfsErr);
+            setMetadata({ title: `Campaign #${data.campaign.campaign_id}`, description: "Metadata unavailable." });
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      setError(err.message || 'Failed to load campaign details');
+    }
+  }, [id]);
+
   useEffect(() => {
     const controller = new AbortController();
-
-    const fetchCampaignDetail = async () => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const response = await fetch(`http://127.0.0.1:8000/campaigns/${id}`, {
-          signal: controller.signal
-        });
-
-        if (!response.ok) {
-          throw new Error(`Campaign not found or server error (${response.status})`);
-        }
-
-        const data = await response.json();
-        
-        setCampaign(data.campaign);
-        setPledges(data.pledges || []);
-
-        if (data.campaign.metadata_uri) {
-          let metaUri = data.campaign.metadata_uri;
-          
-          if (metaUri.startsWith("ipfs://")) {
-            const hash = metaUri.replace("ipfs://", "");
-            if (hash.length > 4) {
-              metaUri = `https://cloudflare-ipfs.com/ipfs/${hash}`;
-            } else {
-              setMetadata({ title: `Campaign #${data.campaign.campaign_id}`, description: "Mock/Test Metadata URI." });
-              metaUri = null;
-            }
-          }
-
-          if (metaUri && (metaUri.startsWith("http://") || metaUri.startsWith("https://"))) {
-            try {
-              const metaRes = await fetch(metaUri, { signal: controller.signal });
-              if (metaRes.ok) {
-                const metaData = await metaRes.json();
-                setMetadata(metaData);
-              } else {
-                setMetadata({ title: `Campaign #${data.campaign.campaign_id}`, description: "Metadata failed to load." });
-              }
-            } catch (ipfsErr) {
-              console.warn("Could not fetch metadata from gateway:", ipfsErr);
-              setMetadata({ title: `Campaign #${data.campaign.campaign_id}`, description: "Metadata unavailable." });
-            }
-          }
-        }
-      } catch (err) {
-        if (err.name === 'AbortError') return;
-        setError(err.message || 'Failed to load campaign details');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCampaignDetail();
+    setLoading(true);
+    fetchCampaignDetail(controller.signal).finally(() => setLoading(false));
     return () => controller.abort();
-  }, [id]);
+  }, [fetchCampaignDetail]);
 
   // Computed check for whether the connected wallet can claim a refund
   const userHasRefundablePledge = useMemo(() => {
@@ -125,6 +125,14 @@ export default function CampaignDetail() {
 
     return deadlinePassed && failed && unrefundedSum > 0n;
   }, [campaign, address, pledges]);
+
+  // Computed check for whether the connected wallet is the creator and can withdraw funds
+  const canWithdraw = useMemo(() => {
+    if (!campaign || !address) return false;
+    const isCreator = campaign.creator.toLowerCase() === address.toLowerCase();
+    const deadlinePassed = Math.floor(Date.now() / 1000) >= campaign.deadline;
+    return isCreator && campaign.is_successful && deadlinePassed && !campaign.withdrawn;
+  }, [campaign, address]);
 
   const handlePledge = async (e) => {
     e.preventDefault();
@@ -205,6 +213,9 @@ export default function CampaignDetail() {
       );
       setPledgeAmount('');
       
+      // Refetch fresh campaign data & indexer updates
+      await fetchCampaignDetail();
+      
     } catch (err) {
       console.error("Pledge failed:", err);
       setPledgeError(err.reason || err.message || "Transaction failed.");
@@ -254,11 +265,69 @@ export default function CampaignDetail() {
           </a>
         </span>
       );
+
+      // Refetch fresh campaign data & indexer updates
+      await fetchCampaignDetail();
+
     } catch (err) {
       console.error("Refund failed:", err);
       setRefundError(err.reason || err.message || "Refund transaction failed.");
     } finally {
       setRefunding(false);
+    }
+  };
+
+  const handleWithdraw = async () => {
+    setWithdrawError(null);
+    setWithdrawSuccess(null);
+
+    if (!address) {
+      alert("Please connect your wallet first.");
+      return;
+    }
+
+    if (!isCorrectNetwork) {
+      await switchToSepolia();
+      return;
+    }
+
+    try {
+      setWithdrawing(true);
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        CrowdfundingArtifact.abi || CrowdfundingArtifact,
+        signer
+      );
+
+      const tx = await contract.withdraw(BigInt(id));
+      setWithdrawSuccess(
+        <span>
+          Withdrawal transaction submitted!{' '}
+          <a href={`https://sepolia.etherscan.io/tx/${tx.hash}`} target="_blank" rel="noreferrer" style={{ color: '#155724', fontWeight: 'bold', textDecoration: 'underline' }}>
+            View on Etherscan
+          </a>
+        </span>
+      );
+
+      await tx.wait();
+      const withdrawnEth = ethers.formatEther(campaign.total_pledged);
+      setWithdrawSuccess(
+        <span>
+          🎉 Successfully withdrew {withdrawnEth} ETH!{' '}
+          <a href={`https://sepolia.etherscan.io/tx/${tx.hash}`} target="_blank" rel="noreferrer" style={{ color: '#155724', fontWeight: 'bold', textDecoration: 'underline' }}>
+            Check receipt
+          </a>
+        </span>
+      );
+
+      // Refetch fresh campaign data & indexer updates
+      await fetchCampaignDetail();
+
+    } catch (err) {
+      console.error("Withdrawal failed:", err);
+      setWithdrawError(err.reason || err.message || "Withdrawal transaction failed.");
+    } finally {
+      setWithdrawing(false);
     }
   };
 
@@ -316,8 +385,44 @@ export default function CampaignDetail() {
           <p style={{ textAlign: 'right', fontSize: '13px', color: '#6c757d', marginTop: '6px' }}>{progressPercent}% funded</p>
         </div>
 
-        {/* Mutually Exclusive Action Area: Refund vs Pledge Form */}
-        {userHasRefundablePledge ? (
+        {/* Three-Way Mutually Exclusive Action Area: Withdraw vs Refund vs Pledge Form */}
+        {canWithdraw ? (
+          <div style={{ background: '#e2f0d9', border: '1px solid #c3e6cb', padding: '20px', borderRadius: '8px', marginTop: '20px' }}>
+            <h3 style={{ margin: '0 0 10px 0', color: '#155724' }}>Campaign Successful & Expired</h3>
+            <p style={{ fontSize: '14px', color: '#155724', marginBottom: '15px' }}>
+              Congratulations! Your campaign reached its goal and the deadline has passed. You can now withdraw all raised funds ({totalEth} ETH).
+            </p>
+
+            {withdrawError && (
+              <div style={{ background: '#f8d7da', color: '#721c24', padding: '10px', borderRadius: '4px', marginBottom: '10px', fontSize: '14px' }}>
+                <strong>Error:</strong> {withdrawError}
+              </div>
+            )}
+
+            {withdrawSuccess && (
+              <div style={{ background: '#d4edda', color: '#155724', padding: '10px', borderRadius: '4px', marginBottom: '10px', fontSize: '14px' }}>
+                {withdrawSuccess}
+              </div>
+            )}
+
+            <button
+              onClick={handleWithdraw}
+              disabled={withdrawing}
+              style={{
+                width: '100%',
+                padding: '12px',
+                background: withdrawing ? '#6c757d' : '#28a745',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                fontWeight: 'bold',
+                cursor: withdrawing ? 'not-allowed' : 'pointer'
+              }}
+            >
+              {withdrawing ? 'Processing Withdrawal...' : `Withdraw Funds (${totalEth} ETH)`}
+            </button>
+          </div>
+        ) : userHasRefundablePledge ? (
           <div style={{ background: '#fff3cd', border: '1px solid #ffeeba', padding: '20px', borderRadius: '8px', marginTop: '20px' }}>
             <h3 style={{ margin: '0 0 10px 0', color: '#856404' }}>Campaign Expired & Failed</h3>
             <p style={{ fontSize: '14px', color: '#664d03', marginBottom: '15px' }}>
